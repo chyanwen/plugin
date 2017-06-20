@@ -36,7 +36,7 @@ ts=int(time.time())
 step=300
 counter_list=[]
 try:
-    result=commands.getoutput("""mysql -uhitv -phitv -e "SELECT COUNT(*) FROM  information_schema.processlist WHERE  id <> CONNECTION_ID() AND TIME > 60 AND command <>'Sleep'" 2>/dev/null""")
+    result=commands.getoutput("""mysql -uuser -ppassword -e "SELECT COUNT(*) FROM  information_schema.processlist WHERE  id <> CONNECTION_ID() AND TIME > 60 AND command <>'Sleep'" 2>/dev/null""")
     count=int(result.split("\n")[1])
 except Exception,e:
     logging.error("%s" %str(e))
