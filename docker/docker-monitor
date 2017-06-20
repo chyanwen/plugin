@@ -1,0 +1,262 @@
+#!/bin/sh
+#-------------------------------------------------------------
+#功能描述：docker容器内部监控docker资源
+#参数说明：-c，--cpu       ---- 列出docker容器中的cpu监控的输出值
+#          -m，--memory    ---- 列出docker容器中memory的输出值
+#          -p，--process   ---- 列出docker容器中所有进程的监控输出值
+#          -t，--time      ---- 指定计算cpu使用率时，获取cpu数据的时间间隔默认2秒
+#          -n, --num       ---- 指定连续输出的次数，默认1次
+#--------------------------------------------------------------
+#修改记录
+#version 6.3.0
+#2015.12.10 孙春晓 新增docker容器内部监控docker资源功能
+#--------------------------------------------------------------
+
+#参数声明
+declare -i i j num 
+declare -i cpu memory process
+
+#默认cpu、memory、process信息打印开关关闭
+cpu=0
+memory=0
+process=0
+#默认cpu%的计算间隔为2秒,打印1次
+time=2
+num=1
+
+#使用方法
+function Usage()
+{
+	echo "Usage: docker-monitor [OPTIONS]"
+	echo "Example: docker-monitor -c -m -p -t 2 -n 6 -v"
+	echo 
+	echo "Monitor resources in docker container."
+	echo "Options:"
+	echo "  -c         Show cpu info"
+	echo "  -m         Show memory info"
+	echo "  -p         Show all the process info"
+	echo "  -t time    Specify the interval in seconds when calculate cpu%"
+	echo "  -n num     Specify the print number"
+	echo "  -v         Show version"
+	exit 1
+}
+if [ $# -lt 1 ] || [ $# -gt 8 ];then
+	Usage
+elif [ -z "$(echo $1|grep '^-[a-z]*$')" ];then
+	Usage
+fi
+#解析参数并检查合法性
+while getopts "cmpt:n:v" opt;do
+	case $opt in
+		c )
+			cpu=1;;
+		m )
+			memory=1;;
+        p )
+			process=1;;
+		t )
+			time=$OPTARG;;
+		n )
+			if [ $(echo $OPTARG | grep '^[0-9]*$') ];then
+				num=$OPTARG
+			else
+				echo "invalid argument $OPTARG"
+				exit 1
+			fi;;
+		v )
+			echo docker-monitor version 1.0 20151218 sunchunxiao;;
+		\? )echo 111
+			Usage;;
+	esac
+done
+
+longid=$(df -h 2>&1|grep /dev/mapper/docker|awk '{print $1}'|cut -d\- -f4) 
+#echo $longid
+if [ -z $longid ];then
+	echo "Can't find docker id ,please run in a docker container."
+	exit 1
+fi
+
+#cpu使用率计算及输出
+function cpuinfo1()
+{
+	#获取每个cpu核的基本信息分别存入对应数组中
+	#echo "cpuinfo1 cpucount=${#cpus[@]}"
+	for(( i=0;i<${#cpus[@]};i++ ));
+	do
+		CPULOG_1=$(cat /proc/stat | grep "cpu${cpus[$i]} " | awk '{print $2" "$3" "$4" "$5" "$6" "$7" "$8}')
+		idle_times1[$i]=$(echo $CPULOG_1 | awk '{print $4}')
+		total_times1[$i]=$(echo $CPULOG_1 | awk '{print $1+$2+$3+$4+$5+$6+$7}')
+		#echo "idle_times1[$i]=${idle_times1[$i]}"
+		#echo "total_times1[$i]=${total_times1[$i]}"
+	done
+}
+
+function cpuinfo2()
+{
+	#echo cpuinfo2
+	#获取每个cpu核的基本信息分别存入对应数组中
+	for(( i=0;i<${#cpus[@]};i++ ));
+	do
+		CPULOG_2=$(cat /proc/stat | grep "cpu${cpus[$i]} " | awk '{print $2" "$3" "$4" "$5" "$6" "$7" "$8}')
+		idle_times2[$i]=$(echo $CPULOG_2 | awk '{print $4}')
+		total_times2[$i]=$(echo $CPULOG_2 | awk '{print $1+$2+$3+$4+$5+$6+$7}')
+		#echo "idle_times2[$i]=${idle_times2[$i]}"
+		#echo "total_times2[$i]=${total_times2[$i]}"
+
+	done
+
+}
+
+function cpuinfo()
+{
+	#echo cpuinfo
+	declare -a cpu_idlepers 
+	declare -a cpustmp cpus
+	declare -a idle_times1 total_times1 
+	declare -a idle_times2 total_times2
+	#获取cpu核编号存入cpus数组中
+	cpustmp=($(cat /sys/fs/cgroup/cpuset/system.slice/docker-${longid}.scope/cpuset.cpus|tr "," " "))
+	#echo ${#cpustmp[@]}
+	k=0
+	for (( i=0;i<${#cpustmp[@]};i++ ));
+	do
+		#echo "cpustmp[$i]=${cpustmp[$i]}"
+		if [ -n "$(echo ${cpustmp[i]}| grep -)" ];then
+			firstcpu=$(echo ${cpustmp[i]}|awk -F '-' '{print $1}')
+			#echo "firstcpu=${firstcpu}"
+			lastcpu=$(echo ${cpustmp[i]}|awk -F '-' '{print $2}')
+			#echo "lastcpu=${lastcpu}"
+			for(( j = ${firstcpu};j <= ${lastcpu};j++ ));
+			do
+				cpus[$k]=$j
+				((k++))
+			done
+		else
+			cpus[$k]=${cpustmp[$i]}
+			((k++))
+		fi
+	done
+
+	cpuinfo1
+	sleep $time
+	cpuinfo2
+	
+	#docker容器cpu使用率计算
+	#echo "cpuscount=${#cpus[@]}"
+	for(( i=0;i<${#cpus[@]};i++ ));
+	do
+		#echo "cpus[$i]=${cpus[$i]}"
+		cpu_idle=`expr ${idle_times2[$i]} - ${idle_times1[$i]}`
+		cpu_total=`expr ${total_times2[$i]} - ${total_times1[$i]}`
+		cpu_idlepers[$i]=$(awk 'BEGIN{printf "%.1f\n",'$cpu_idle'*100/'$cpu_total'}')
+		cpu_usepers[$i]=$(awk 'BEGIN{printf "%.1f\n",100 - '${cpu_idlepers[$i]}'}')
+	done
+
+	let sum=0
+	for cpu_idletmp in "${cpu_idlepers[@]}";
+	do
+		sum=$(awk 'BEGIN{printf "%0.1f\n",'$sum' + '$cpu_idletmp'}')
+		#echo "sum $sum "
+		#echo "cpu_idletmp $cpu_idletmp"
+	done
+
+	sys_idle=$(awk 'BEGIN{printf "%.1f\n",'$sum' / '${#cpus[@]}'}' )
+	sys_used=$(awk 'BEGIN{printf "%.1f\n",100 - '$sys_idle'}' )
+
+	#docker容器cpu信息打印
+	printf "%sCpu(%-1s):  %-5s %-5s %-5s %-10s \n" "%" s ${sys_used} used,   ${sys_idle} idle
+	for(( i=0;i<${#cpus[@]};i++ ));
+	do
+	  printf "%sCpu%-3s:  %-5s %-5s %-5s %-10s \n" "%" "${cpus[$i]}" "${cpu_usepers[$i]}" used, "${cpu_idlepers[$i]}" idle
+	done
+	echo
+}
+
+#memory使用率计算及输出
+function memoryinfo()
+{
+	#echo memoryinfo
+	#获取数据
+	memory_limit=$( cat /sys/fs/cgroup/memory/system.slice/docker-${longid}.scope/memory.limit_in_bytes )
+	memory_usage=$( cat /sys/fs/cgroup/memory/system.slice/docker-${longid}.scope/memory.usage_in_bytes)	
+	memory_percent=$(awk 'BEGIN{printf "%.1f\n",'$memory_usage'*100/'$memory_limit'}')
+	memory_rss=$( cat /sys/fs/cgroup/memory/system.slice/docker-${longid}.scope/memory.stat|grep total_rss|head -n 1|cut -d" " -f2 )
+	memory_percentrss=$(awk 'BEGIN{printf "%.1f\n",'$memory_rss'*100/'$memory_limit'}')
+	memory_max_usage=$( cat /sys/fs/cgroup/memory/system.slice/docker-${longid}.scope/memory.max_usage_in_bytes )
+	memory_failcnt=$( cat /sys/fs/cgroup/memory/system.slice/docker-${longid}.scope/memory.failcnt )
+	#打印数据
+	echo "docker container mem%(usage/limit) $memory_percent%"
+	echo "docker container mem%(rss/limit) $memory_percentrss%"  
+	echo "memory.usage_in_bytes $memory_usage"
+	echo "memory.limit_in_bytes $memory_limit"
+	echo "memory.max_usage_in_bytes $memory_max_usage"
+	echo "memory.failcnt $memory_failcnt"
+	cat /sys/fs/cgroup/memory/system.slice/docker-${longid}.scope/memory.stat|grep total
+	echo
+}
+#进程的cpu及memory计算及输出
+function processinfo()
+{
+	#echo processinfo
+	#读取数据
+	pids=$(ls /proc/|grep -o "[0-9]\+"|sort -n|xargs)
+	#echo $pids
+	#计算数据
+	#打印数据
+	printf "%-10s%-10s%-10s%-10s%-10s\n" PID    RES    %CPU     %MEM     COMMAND
+	for pid in $pids;
+	do
+		#echo $pid
+		if [ -d /proc/${pid} ];then
+			#计算CPU使用率
+			total_cpu1[$pid]=$(cat /proc/uptime |awk '{print $1}')
+			pid_cpu1[$pid]=$(cat /proc/${pid}/stat |awk '{print $14+$15+$16+$17}')
+			#echo "pid_cpu1[$pid] ${pid_cpu1[$pid]}"
+			#echo "total_cpu1[$pid] ${total_cpu1[$pid]}"
+		fi
+	done
+    sleep $time
+	for pid in $pids;
+	do
+		if [ -d /proc/${pid} ];then
+			rss=$(cat /proc/${pid}/statm |awk '{print $2}')
+		
+			pid_cpu2=$(cat /proc/${pid}/stat |awk '{print $14+$15+$16+$17}')
+			total_cpu2=$(cat /proc/uptime |awk '{print $1}')
+			pid_cpu=`expr $pid_cpu2 - ${pid_cpu1[$pid]}`
+			total_cpu=$(awk 'BEGIN{printf '$total_cpu2' - '${total_cpu1[$pid]}'}')
+			total_cpu=$(awk 'BEGIN{printf '$total_cpu'*100}')
+			#echo "pid_cpu $pid_cpu"
+			#echo "total_cpu $total_cpu"
+			processcpu=$(awk 'BEGIN{printf "%.1f\n",'$pid_cpu'*100/'$total_cpu'}')
+		
+			#内存使用率计算
+			memory_limit=$( cat /sys/fs/cgroup/memory/system.slice/docker-${longid}.scope/memory.limit_in_bytes )
+			mem=$(awk 'BEGIN{printf "%.1f\n",'$rss'*4*1024*100/'$memory_limit'}')
+
+			command=$(cat /proc/${pid}/cmdline|paste -sd" " )
+			#计算内存使用率
+			printf "%-10s%-10s%-10s%-10s%-10s\n" $pid    $((rss * 4))    $processcpu    $mem    "$command"
+		fi
+	done
+	echo
+}
+
+#主函数循环
+for(( m=0;m<$num;m++ ));
+do
+	date "+%Y-%m-%d %H:%M:%S" 	
+	if (( cpu != 0 ));then
+		cpuinfo
+	fi
+
+	if (( memory != 0 ));then
+		memoryinfo
+	fi
+
+	if (( process != 0 ));then
+		processinfo
+	fi
+	sleep 1
+done
