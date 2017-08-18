@@ -17,7 +17,7 @@ logging.basicConfig(level=logging.ERROR,
                     filename='/home/work/open-falcon/agent/plugin/error.log',  
                     format='%(asctime)s - %(filename)s[line:%(lineno)d] - %(levelname)s: %(message)s')
 
-ip=commands.getoutput("/usr/sbin/ifconfig|egrep 'inet 192\.168|inet 10|inet 172\.1[6-9]|inet 172\.2[0-9]|inet 172\.3[01]'| awk '{print $2}'")
+ip=commands.getoutput("/usr/sbin/ifconfig|egrep 'inet 192|inet 10|inet 172\.1[6-9]|inet 172\.2[0-9]|inet 172\.3[01]'| awk '{print $2}'")
 re=subprocess.Popen("/usr/bin/sh /home/work/open-falcon/agent/plugin/docker/docker-monitor -m",stdout=subprocess.PIPE,stderr=subprocess.PIPE,shell=True)
 #value=re.communicate()[0].split('\n')[2].split()[3].split('%')[0]
 try:

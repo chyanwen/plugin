@@ -1,10 +1,9 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 #Author：yanwen
-#Date：2016.12.04
+#Date：2017.07.22
 #Version：1.0
-#V1.0 Description：用户登录数监控
-
+#V1.0 Description：监控收到三次握手ack包，accept队列满
 #from subprocess import Popen,PIPE
 import os
 import time
@@ -25,21 +24,21 @@ elif 'SuSE' in platform.platform():
 else:
     logging.error("UNKNOWN platform!\n")
     sys.exit(1)
-#def getvalue():
-#    re=Popen("/usr/bin/last | grep 'logged'| wc -l",stdout=PIPE,stderr=PIPE,shell=True)
-#    return int(re.communicate()[0].strip())
-
 try:
-    value = int(commands.getoutput("/usr/bin/last | grep 'logged'| wc -l").strip())
+    result = commands.getoutput("netstat -s | grep overflow |awk '{print $1}'")
+    if result=='':
+        value=0
+    else:
+        value=int(result)
 except Exception,err:
-    logging.error("Run command failed:%s" %str(err))
-    sys.exit(2)
+    logging.error("run command error")
+    sys.exit(2)   
 def create_record():
     record = {}
-    record['metric'] = 'users.logged'
+    record['metric'] = 'listenqueue.overflow'
     record['endpoint'] = ip.split('\n')[0]+'_'+os.uname()[1]
     record['timestamp'] = int(time.time())
-    record['step'] = 600
+    record['step'] = 300
     record['value'] = value
     record['counterType'] = 'GAUGE'
     record['tags'] = ''
